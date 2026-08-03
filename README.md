@@ -14,10 +14,13 @@ The system uses **Yahoo Finance** to fetch stock data, calculates technical indi
 - 📈 Technical Indicators
   - RSI (Relative Strength Index)
   - MACD (Moving Average Convergence Divergence)
+      - MA50 and MA100 trend overlays
 - 🤖 Machine Learning prediction using XGBoost
 - 💹 BUY / SELL recommendation
 - 🔄 Dynamic stock selection
 - 📋 Latest stock data display
+- 📊 Interactive price, volume, RSI, and MACD charts
+- 🧠 Quick rule-based market analysis
 - 📉 Interactive Streamlit dashboard
 - ⚡ Fast and lightweight interface
 
@@ -147,9 +150,11 @@ Streamlit Dashboard
 
 - Dynamic Stock Selection
 - Current Stock Price
+- MA50 and MA100
 - RSI Value
 - MACD Value
 - BUY / SELL Prediction
+- Quick Market Analysis
 - Latest Market Data
 - Interactive Price Visualization
 
