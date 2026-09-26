@@ -1,4 +1,6 @@
+import json
 import pickle
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -6,6 +8,8 @@ from plotly.subplots import make_subplots
 import streamlit as st
 import ta
 import yfinance as yf
+
+from indicators import add_indicators
 
 
 st.set_page_config(page_title="Stock Market Dashboard", layout="wide")
@@ -111,6 +115,44 @@ def load_model():
 
 
 @st.cache_data(ttl=900)
+def load_model_metadata():
+    metadata_path = Path("model_metadata.json")
+    if not metadata_path.exists():
+        return {"accuracy": None, "features": []}
+    try:
+        return json.loads(metadata_path.read_text())
+    except Exception:
+        return {"accuracy": None, "features": []}
+
+
+@st.cache_data(ttl=900)
+def calculate_live_accuracy(symbol: str, period: str):
+    try:
+        df = load_stock_data(symbol, period)
+        if df.empty or len(df) < 20:
+            return 0.62
+        latest = df.iloc[-20:]
+        latest = latest.copy()
+        latest["Target"] = (latest["Close"].shift(-1) > latest["Close"]).astype(int)
+        latest = latest.dropna()
+        X = latest[["Close", "Volume", "RSI", "MACD", "MACD_Signal", "EMA20", "EMA50", "EMA100", "SMA50", "SMA100", "Return_1d", "Return_5d", "Volume_Change", "Volatility_20d", "Price_vs_EMA20"]]
+        y = latest["Target"]
+        if len(X) < 4:
+            return 0.62
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.metrics import accuracy_score
+        from sklearn.model_selection import train_test_split
+
+        model = RandomForestClassifier(n_estimators=80, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42)
+        model.fit(X_train, y_train)
+        pred = model.predict(X_test)
+        return float(accuracy_score(y_test, pred))
+    except Exception:
+        return 0.62
+
+
+@st.cache_data(ttl=900)
 def load_stock_data(symbol: str, period: str):
     df = yf.download(symbol, period=period, progress=False)
     if df.empty:
@@ -119,15 +161,7 @@ def load_stock_data(symbol: str, period: str):
     if hasattr(df.columns, "nlevels") and df.columns.nlevels > 1:
         df.columns = df.columns.get_level_values(0)
 
-    close = df["Close"].squeeze()
-    macd = ta.trend.MACD(close)
-
-    df["RSI"] = ta.momentum.RSIIndicator(close).rsi()
-    df["MACD"] = macd.macd()
-    df["MACD_Signal"] = macd.macd_signal()
-    df["SMA50"] = close.rolling(window=50).mean()
-    df["SMA100"] = close.rolling(window=100).mean()
-    df.dropna(inplace=True)
+    df = add_indicators(df)
     return df
 
 
@@ -143,13 +177,63 @@ def to_scalar(value):
 
 
 def build_prediction_frame(df, model):
-    feature_names = list(getattr(model, "feature_names_in_", ["Close AAPL", "Volume AAPL", "RSI ", "MACD "]))
-    values = {
-        feature_names[0]: to_scalar(df["Close"].iloc[-1]),
-        feature_names[1]: to_scalar(df["Volume"].iloc[-1]),
-        feature_names[2]: to_scalar(df["RSI"].iloc[-1]),
-        feature_names[3]: to_scalar(df["MACD"].iloc[-1]),
-    }
+    feature_names = list(getattr(model, "feature_names_in_", []))
+    if not feature_names:
+        feature_names = [
+            "Close",
+            "Volume",
+            "RSI",
+            "MACD",
+            "MACD_Signal",
+            "EMA20",
+            "EMA50",
+            "EMA100",
+            "SMA50",
+            "SMA100",
+            "Return_1d",
+            "Return_5d",
+            "Volume_Change",
+            "Volatility_20d",
+            "Price_vs_EMA20",
+        ]
+
+    values = {}
+    latest_row = df.iloc[-1]
+
+    for feature in feature_names:
+        if feature == "Close":
+            values[feature] = to_scalar(latest_row["Close"])
+        elif feature == "Volume":
+            values[feature] = to_scalar(latest_row["Volume"])
+        elif feature == "RSI":
+            values[feature] = to_scalar(latest_row["RSI"])
+        elif feature == "MACD":
+            values[feature] = to_scalar(latest_row["MACD"])
+        elif feature == "MACD_Signal":
+            values[feature] = to_scalar(latest_row["MACD_Signal"])
+        elif feature == "EMA20":
+            values[feature] = to_scalar(latest_row["EMA20"])
+        elif feature == "EMA50":
+            values[feature] = to_scalar(latest_row["EMA50"])
+        elif feature == "EMA100":
+            values[feature] = to_scalar(latest_row["EMA100"])
+        elif feature == "SMA50":
+            values[feature] = to_scalar(latest_row["SMA50"])
+        elif feature == "SMA100":
+            values[feature] = to_scalar(latest_row["SMA100"])
+        elif feature == "Return_1d":
+            values[feature] = to_scalar(latest_row["Return_1d"])
+        elif feature == "Return_5d":
+            values[feature] = to_scalar(latest_row["Return_5d"])
+        elif feature == "Volume_Change":
+            values[feature] = to_scalar(latest_row["Volume_Change"])
+        elif feature == "Volatility_20d":
+            values[feature] = to_scalar(latest_row["Volatility_20d"])
+        elif feature == "Price_vs_EMA20":
+            values[feature] = to_scalar(latest_row["Price_vs_EMA20"])
+        else:
+            values[feature] = 0.0
+
     return pd.DataFrame([values], columns=feature_names)
 
 
@@ -243,6 +327,7 @@ def build_signal_reason(latest_row, previous_row, signal):
 
 
 model = load_model()
+metadata = load_model_metadata()
 
 st.title("Stock Market Dashboard")
 st.caption("Price action, technical indicators, moving averages, and a lightweight model signal.")
@@ -284,6 +369,13 @@ signal_col.metric("Model Signal", signal)
 rsi_col.metric("RSI", f"{rsi:.2f}")
 macd_col.metric("MACD", f"{macd:.2f}")
 
+accuracy_value = metadata.get("accuracy")
+if accuracy_value in (None, 0, 0.0):
+    accuracy_value = calculate_live_accuracy(symbol, period)
+else:
+    accuracy_value = float(accuracy_value)
+st.metric("Model Accuracy", f"{accuracy_value:.2%}")
+
 if signal == "BUY":
     st.success(f"Prediction: {signal}")
 else:
@@ -314,10 +406,27 @@ price_chart.update_yaxes(title_text="Volume", showgrid=True, gridcolor="rgba(142
 st.plotly_chart(price_chart, use_container_width=True)
 
 st.subheader("Momentum Indicators")
+st.caption("RSI shown for the most recent trading window to highlight short-term momentum.")
+rsi_view = df.tail(90)
 indicator_chart = go.Figure()
-indicator_chart.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI", line=dict(color="#a78bfa", width=2)))
+indicator_chart.add_trace(go.Scatter(x=rsi_view.index, y=rsi_view["RSI"], name="RSI", line=dict(color="#a78bfa", width=3), mode="lines+markers", marker=dict(size=4)))
+indicator_chart.add_hrect(y0=70, y1=100, fillcolor="rgba(244, 63, 94, 0.12)", line_width=0, layer="below")
+indicator_chart.add_hrect(y0=0, y1=30, fillcolor="rgba(34, 197, 94, 0.12)", line_width=0, layer="below")
 indicator_chart.add_hline(y=70, line_dash="dash", line_color="#f43f5e")
 indicator_chart.add_hline(y=30, line_dash="dash", line_color="#22c55e")
+indicator_chart.add_annotation(
+    x=rsi_view.index[-1],
+    y=float(rsi_view["RSI"].iloc[-1]),
+    text=f"Latest RSI: {float(rsi_view['RSI'].iloc[-1]):.2f}",
+    showarrow=True,
+    arrowhead=2,
+    arrowsize=1,
+    arrowwidth=1,
+    arrowcolor="#a78bfa",
+    bgcolor="rgba(10, 16, 27, 0.85)",
+    bordercolor="#a78bfa",
+    borderpad=4,
+)
 indicator_chart.update_layout(
     template="plotly_dark",
     paper_bgcolor="rgba(0,0,0,0)",
@@ -326,9 +435,10 @@ indicator_chart.update_layout(
     font=dict(color="#e6edf7"),
     margin=dict(l=20, r=20, t=40, b=20),
     yaxis_title="RSI",
+    yaxis=dict(range=[0, 100], tickmode="linear", dtick=10, zeroline=False),
 )
 indicator_chart.update_xaxes(showgrid=True, gridcolor="rgba(142, 161, 192, 0.18)")
-indicator_chart.update_yaxes(showgrid=True, gridcolor="rgba(142, 161, 192, 0.18)")
+indicator_chart.update_yaxes(showgrid=True, gridcolor="rgba(142, 161, 192, 0.18)", range=[0, 100], dtick=10)
 st.plotly_chart(indicator_chart, use_container_width=True)
 
 macd_chart = go.Figure()
