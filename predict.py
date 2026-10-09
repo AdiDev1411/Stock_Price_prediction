@@ -1,23 +1,24 @@
 import pickle
 import yfinance as yf
-import ta
+
+from indicators import add_indicators
 
 # Load model
 model = pickle.load(open("xgb.pkl", "rb"))
 
-# Download latest data
-df = yf.download("AAPL", period="3mo")
+# Download enough history for the model's 100-day indicators.
+df = yf.download("AAPL", period="1y", progress=False)
 
-# Indicators
-close = df['Close'].squeeze()
+if hasattr(df.columns, "nlevels") and df.columns.nlevels > 1:
+    df.columns = df.columns.get_level_values(0)
 
-df['RSI'] = ta.momentum.RSIIndicator(close).rsi()
-df['MACD'] = ta.trend.MACD(close).macd()
+df = add_indicators(df)
 
-df.dropna(inplace=True)
+feature_names = list(getattr(model, "feature_names_in_", []))
+if not feature_names:
+    raise RuntimeError("The model does not contain feature names.")
 
-# Latest row
-latest = df[['Close','Volume','RSI','MACD']].iloc[-1:]
+latest = df.dropna(subset=feature_names)[feature_names].iloc[-1:]
 
 # Predict
 prediction = model.predict(latest)

@@ -114,7 +114,6 @@ def load_model():
     return pickle.load(open("xgb.pkl", "rb"))
 
 
-@st.cache_data(ttl=900)
 def load_model_metadata():
     metadata_path = Path("model_metadata.json")
     if not metadata_path.exists():
@@ -231,6 +230,14 @@ def build_prediction_frame(df, model):
             values[feature] = to_scalar(latest_row["Volatility_20d"])
         elif feature == "Price_vs_EMA20":
             values[feature] = to_scalar(latest_row["Price_vs_EMA20"])
+        elif feature == "EMA20_vs_EMA50":
+            values[feature] = to_scalar(latest_row["EMA20_vs_EMA50"])
+        elif feature == "EMA50_vs_EMA100":
+            values[feature] = to_scalar(latest_row["EMA50_vs_EMA100"])
+        elif feature == "Return_10d":
+            values[feature] = to_scalar(latest_row["Return_10d"])
+        elif feature == "RSI_Change":
+            values[feature] = to_scalar(latest_row["RSI_Change"])
         else:
             values[feature] = 0.0
 
@@ -294,6 +301,12 @@ def build_signal_reason(latest_row, previous_row, signal):
     macd_bullish = macd > macd_signal
     macd_bearish = macd < macd_signal
 
+    if signal == "HOLD":
+        return [
+            "Model confidence is below the trade threshold, so no BUY or SELL signal is issued.",
+            "Wait for a clearer 20-trading-day directional setup.",
+        ]
+
     if signal == "BUY":
         reasons = []
         if trend_bullish:
@@ -345,7 +358,11 @@ if df.empty:
 
 latest = build_prediction_frame(df, model)
 prediction = model.predict(latest)
-signal = "BUY" if prediction[0] == 1 else "SELL"
+probabilities = model.predict_proba(latest)[0]
+confidence = float(probabilities.max())
+confidence_threshold = float(metadata.get("confidence_threshold", 0.75))
+raw_signal = "BUY" if prediction[0] == 1 else "SELL"
+signal = raw_signal if confidence >= confidence_threshold else "HOLD"
 
 latest_row = df.iloc[-1]
 previous_row = df.iloc[-2] if len(df) > 1 else latest_row
@@ -364,8 +381,9 @@ col2.metric("Current Price", f"${current_price:.2f}", f"{analysis['price_change'
 col3.metric("MA50", f"${ma50:.2f}")
 col4.metric("MA100", f"${ma100:.2f}")
 
-signal_col, rsi_col, macd_col = st.columns(3)
+signal_col, confidence_col, rsi_col, macd_col = st.columns(4)
 signal_col.metric("Model Signal", signal)
+confidence_col.metric("Confidence", f"{confidence:.2%}")
 rsi_col.metric("RSI", f"{rsi:.2f}")
 macd_col.metric("MACD", f"{macd:.2f}")
 
@@ -375,9 +393,14 @@ if accuracy_value in (None, 0, 0.0):
 else:
     accuracy_value = float(accuracy_value)
 st.metric("Model Accuracy", f"{accuracy_value:.2%}")
+coverage_value = metadata.get("coverage")
+if coverage_value is not None:
+    st.caption(f"Selective accuracy on {float(coverage_value):.2%} of historical signals at the confidence threshold.")
 
 if signal == "BUY":
     st.success(f"Prediction: {signal}")
+elif signal == "HOLD":
+    st.warning(f"Prediction: {signal}")
 else:
     st.error(f"Prediction: {signal}")
 

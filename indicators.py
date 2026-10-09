@@ -27,6 +27,21 @@ def add_indicators(df):
     df["Volume_Change"] = volume.pct_change(1)
     df["Volatility_20d"] = close.pct_change().rolling(20).std()
     df["Price_vs_EMA20"] = close / df["EMA20"] - 1
+    df["EMA20_vs_EMA50"] = df["EMA20"] / df["EMA50"] - 1
+    df["EMA50_vs_EMA100"] = df["EMA50"] / df["EMA100"] - 1
+    df["Return_10d"] = close.pct_change(10)
+    df["RSI_Change"] = df["RSI"].diff(5)
 
-    df = df.dropna()
+    df = df.dropna(
+        subset=[
+            "Close",
+            "Volume",
+            "RSI",
+            "MACD",
+            "MACD_Signal",
+            "EMA20",
+            "EMA50",
+            "EMA100",
+        ]
+    )
     return df
